@@ -1,0 +1,258 @@
+import os
+os.environ['OMP_NUM_THREADS'] = '1'
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from prophet import Prophet
+from sklearn.ensemble import IsolationForest
+from sklearn.cluster import KMeans
+from datetime import datetime, timedelta
+import io
+
+# Попытка импорта kaleido (опционально)
+try:
+    import kaleido
+    KALEIDO_AVAILABLE = True
+except ImportError:
+    KALEIDO_AVAILABLE = False
+    st.warning("⚠️ Kaleido не установлен — PNG экспорт недоступен (только онлайн графики)")
+
+# Настройка страницы
+st.set_page_config(page_title="RetailLoss Sentinel v8", layout="wide", page_icon="🛡️")
+
+st.title("🛡️ RetailLoss Sentinel v8")
+st.markdown("**AI-анализатор потерь для ритейла** | Авто-распознавание колонок Excel")
+
+# Сайдбар
+with st.sidebar:
+    st.header("📁 Данные")
+    uploaded_file = st.file_uploader("Excel файл", type=["xlsx"])
+    
+    if st.button("🔄 Тестовые данные", type="primary"):
+        st.session_state.use_test = True
+        st.rerun()
+    
+    st.markdown("---")
+    st.success("✅ ML: scikit-learn + Prophet")
+    if KALEIDO_AVAILABLE:
+        st.success("✅ PNG экспорт: Kaleido OK")
+    st.info("**Авто-детект:** Дата | Категория | СуммаПотерь | Магазин")
+
+@st.cache_data
+def сгенерировать_тестовые_данные():
+    np.random.seed(42)
+    сегодня = datetime(2025, 12, 20)
+    даты = pd.date_range(end=сегодня, periods=180, freq='D')
+    категории = np.random.choice(['Молочка', 'Мясо', 'Овощи', 'Алкоголь', 'Хлеб', 'Бакалея', 'Заморозка'], size=180)
+    суммы_потерь = np.random.uniform(300, 7000, size=180).round(2)
+    магазины = np.random.choice(['Магазин1', 'Магазин2', 'Магазин3', 'Магазин4', 'Магазин5'], size=180)
+    df = pd.DataFrame({
+        'Дата': даты,
+        'Категория': категории,
+        'СуммаПотерь': суммы_потерь,
+        'Магазин': магазины
+    })
+    df['Дата'] = df['Дата'].dt.strftime('%d.%m.%Y')
+    return df
+
+def detect_columns(df):
+    df = df.copy()
+    lower_columns = {col.lower(): col for col in df.columns}
+    
+    date_candidates = [col for col in lower_columns if any(kw in col for kw in ['дат', 'date'])]
+    category_candidates = [col for col in lower_columns if any(kw in col for kw in ['кат', 'cat', 'товар', 'продукт'])]
+    loss_candidates = [col for col in lower_columns if any(kw in col for kw in ['пот', 'loss', 'сум', 'убыт', 'спис'])]
+    store_candidates = [col for col in lower_columns if any(kw in col for kw in ['маг', 'store', 'филиал'])]
+    
+    # По типам данных (fallback)
+    if not date_candidates:
+        for col in df.columns:
+            try:
+                parsed = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
+                if parsed.notna().mean() > 0.7: date_candidates = [col.lower()]; break
+            except: pass
+    
+    if not category_candidates:
+        for col in df.columns:
+            if df[col].dtype == 'object' and df[col].nunique() / len(df) < 0.1: 
+                category_candidates = [col.lower()]; break
+    
+    if not loss_candidates:
+        for col in df.columns:
+            numeric = pd.to_numeric(df[col], errors='coerce')
+            if numeric.notna().mean() > 0.9 and numeric.mean() > 100: 
+                loss_candidates = [col.lower()]; break
+    
+    if not store_candidates:
+        for col in df.columns:
+            if df[col].dtype == 'object' and df[col].nunique() / len(df) < 0.05: 
+                store_candidates = [col.lower()]; break
+    
+    if not all([date_candidates, category_candidates, loss_candidates, store_candidates]):
+        st.error("❌ Не найдены колонки: Дата, Категория, СуммаПотерь, Магазин")
+        st.stop()
+    
+    date_col, category_col, loss_col, store_col = [
+        lower_columns[candidates[0]] for candidates in [date_candidates, category_candidates, loss_candidates, store_candidates]
+    ]
+    
+    st.success(f"✅ Распознано: {date_col} → Дата | {category_col} → Категория | {loss_col} → СуммаПотерь | {store_col} → Магазин")
+    
+    return df.rename(columns={date_col: 'Дата', category_col: 'Категория', loss_col: 'СуммаПотерь', store_col: 'Магазин'})
+
+def save_plot_png(fig, filename):
+    """Безопасный PNG экспорт с fallback"""
+    if KALEIDO_AVAILABLE:
+        try:
+            buf = io.BytesIO()
+            fig.write_image(buf, format='png', width=1200, height=600)
+            buf.seek(0)
+            return buf, True
+        except Exception as e:
+            st.warning(f"⚠️ PNG экспорт: {e}")
+            return None, False
+    return None, False
+
+def выполнить_анализ(df_original):
+    df = df_original.copy()
+    df['Дата'] = pd.to_datetime(df['Дата'], dayfirst=True, errors='coerce')
+    if df['Дата'].isnull().any(): st.error("❌ Некорректные даты"); st.stop()
+    
+    df = df.sort_values('Дата').reset_index(drop=True)
+    
+    # Фильтры (sidebar)
+    with st.sidebar:
+        st.subheader("🔧 Фильтры")
+        col1, col2 = st.columns(2)
+        with col1:
+            магазины = ['Все'] + sorted(df['Магазин'].unique().tolist())
+            выбранные_магазины = st.multiselect("Магазины", магазины, default='Все')
+        with col2:
+            категории = ['Все'] + sorted(df['Категория'].unique().tolist())
+            выбранные_категории = st.multiselect("Категории", категории, default='Все')
+        
+        period = st.date_input("Период", value=(df['Дата'].min().date(), df['Дата'].max().date()))
+    
+    # Применить фильтры
+    df_filt = df.copy()
+    if 'Все' not in выбранные_магазины: df_filt = df_filt[df_filt['Магазин'].isin(выбранные_магазины)]
+    if 'Все' not in выбранные_категории: df_filt = df_filt[df_filt['Категория'].isin(выбранные_категории)]
+    df_filt = df_filt[(df_filt['Дата'].dt.date >= period[0]) & (df_filt['Дата'].dt.date <= period[1])]
+    
+    if df_filt.empty: st.warning("⚠️ Нет данных по фильтрам"); st.stop()
+    
+    # Метрики
+    текущие_потери = df_filt['СуммаПотерь'].sum()
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: st.metric("💰 Потери", f"{текущие_потери:,.0f} ₽")
+    with col2: st.metric("📦 Категорий", df_filt['Категория'].nunique())
+    with col3: st.metric("🏪 Магазинов", df_filt['Магазин'].nunique())
+    
+    # Аномалии
+    df_filt['Индекс'] = np.arange(len(df_filt))
+    iso = IsolationForest(contamination=0.1, random_state=42)
+    df_filt['Аномалия'] = iso.fit_predict(df_filt[['Индекс', 'СуммаПотерь']])
+    аномалии = df_filt[df_filt['Аномалия'] == -1]
+    with col4: st.metric("🚨 Аномалий", len(аномалии))
+    
+    # Графики
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("🔥 По категориям")
+        cat_loss = df_filt.groupby('Категория')['СуммаПотерь'].sum().sort_values(ascending=False).reset_index()
+        fig_cat = px.bar(cat_loss, x='Категория', y='СуммаПотерь', text='СуммаПотерь', 
+                        color='СуммаПотерь', color_continuous_scale='YlOrRd')
+        fig_cat.update_traces(texttemplate='%{text:,.0f}₽', textposition='outside')
+        st.plotly_chart(fig_cat, width='stretch')
+    
+    with col2:
+        st.subheader("🏪 По магазинам")
+        store_loss = df_filt.groupby('Магазин')['СуммаПотерь'].sum().sort_values(ascending=False).reset_index()
+        fig_store = px.bar(store_loss, x='Магазин', y='СуммаПотерь', text='СуммаПотерь', 
+                          color='СуммаПотерь', color_continuous_scale='YlOrRd')
+        fig_store.update_traces(texttemplate='%{text:,.0f}₽', textposition='outside')
+        st.plotly_chart(fig_store, width='stretch')
+    
+    # Динамика
+    st.subheader("📈 Динамика")
+    df_month = df_filt.copy()
+    df_month['Месяц'] = df_month['Дата'].dt.to_period('M').astype(str)
+    monthly = df_month.groupby('Месяц')['СуммаПотерь'].sum().reset_index()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        fig_month = px.line(monthly, x='Месяц', y='СуммаПотерь', markers=True)
+        st.plotly_chart(fig_month, width='stretch')
+        buf, ok = save_plot_png(fig_month, "monthly.png")
+        if ok:
+            st.download_button("📥 PNG месяц", buf, "monthly.png", "image/png")
+    
+    # Тепловая карта
+    st.subheader("🌡️ Тепловая карта")
+    df_heat = df_filt.copy()
+    df_heat['День'] = df_heat['Дата'].dt.day_name(locale='ru_RU')
+    pivot = df_heat.pivot_table('СуммаПотерь', 'Категория', 'День', aggfunc='sum', fill_value=0)
+    days_order = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+    pivot = pivot.reindex(columns=days_order)
+    
+    fig_heat = px.imshow(pivot, color_continuous_scale='YlOrRd', text_auto=True)
+    st.plotly_chart(fig_heat, width='stretch')
+    
+    # Аномалии таблица
+    if len(аномалии) > 0:
+        st.subheader("⚠️ Аномалии")
+        st.dataframe(аномалии[['Дата', 'Категория', 'СуммаПотерь', 'Магазин']].style.format({'СуммаПотерь': '{:,.0f}₽'}), width='stretch')
+    
+    # Кластеризация
+    if len(df_filt) >= 3:
+        kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+        df_filt['Кластер'] = kmeans.fit_predict(df_filt[['СуммаПотерь']])
+        cluster_stats = df_filt.groupby('Кластер')['СуммаПотерь'].agg(['count', 'mean', 'min', 'max']).round(0)
+        cluster_stats.columns = ['Кол-во', 'Среднее₽', 'Мин₽', 'Макс₽']
+        st.subheader("🧩 Кластеры")
+        st.dataframe(cluster_stats)
+    
+    # Prophet (упрощенно)
+    if len(df_filt) >= 14:
+        daily = df_filt.groupby('Дата')['СуммаПотерь'].sum().reset_index()
+        daily.columns = ['ds', 'y']
+        m = Prophet(daily_seasonality=True)
+        m.fit(daily)
+        future = m.make_future_dataframe(periods=7)
+        forecast = m.predict(future)
+        
+        st.subheader("🔮 Прогноз")
+        fig_fc = m.plot(forecast)
+        st.pyplot(fig_fc)
+        
+        fc_table = forecast[['ds', 'yhat']].tail(7).round(0)
+        fc_table.columns = ['Дата', 'Прогноз₽']
+        st.dataframe(fc_table)
+    
+    # Excel отчет
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+        df_filt.to_excel(writer, 'Данные', index=False)
+        cat_loss.to_excel(writer, 'Категории')
+        store_loss.to_excel(writer, 'Магазины')
+        if len(аномалии)>0: аномалии.to_excel(writer, 'Аномалии', index=False)
+        monthly.to_excel(writer, 'Месяц')
+    
+    buf.seek(0)
+    st.download_button("📊 Полный отчет Excel", buf, f"отчет_{datetime.now().strftime('%d%m%Y')}.xlsx")
+
+# Main
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+    df = detect_columns(df)
+    выполнить_анализ(df)
+elif st.session_state.get('use_test', False):
+    df = сгенерировать_тестовые_данные()
+    df['Дата'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y')
+    выполнить_анализ(df)
+    st.session_state.use_test = False
+else:
+    st.info("👆 Загрузите Excel или нажмите 'Тестовые данные'")
+    st.dataframe(сгенерировать_тестовые_данные().head())
