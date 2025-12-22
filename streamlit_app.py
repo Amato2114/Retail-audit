@@ -401,3 +401,4 @@ else:
     st.markdown("### Превью тестовых данных")
     preview_df = сгенерировать_тестовые_данные()
     st.dataframe(preview_df.head(20), use_container_width=True)
+
