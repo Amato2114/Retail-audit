@@ -14,7 +14,7 @@ st.set_page_config(page_title="RetailLoss Sentinel v8", layout="wide", page_icon
 # Заголовок и описание
 st.title("🛡️ RetailLoss Sentinel v8")
 st.markdown("**Инновационный AI-анализатор потерь для гипермаркетов**")
-st.markdown("Авто-распознавание колонок • Улучшенный ML • ABC-анализ • Прогноз по категориям")
+st.markdown("Авто-распознавание колонок • Улучшенный ML • ABC/Pareto • Прогноз по категориям")
 
 # Сайдбар
 with st.sidebar:
@@ -117,7 +117,7 @@ else:
     st.dataframe(preview_df.head(20), width='stretch')
     st.stop()
 
-# Фильтры в сайдбаре
+# Фильтры
 with st.sidebar:
     st.markdown("---")
     st.subheader("🔧 Фильтры")
@@ -167,7 +167,7 @@ st.markdown(f"""
 
 st.markdown("---")
 
-# Конфиг для встроенной кнопки скачивания PNG в Plotly
+# Конфиг для встроенной кнопки скачивания PNG
 plotly_config = {
     "toImageButtonOptions": {
         "format": "png",
@@ -179,7 +179,7 @@ plotly_config = {
 }
 
 # Табы
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Обзор", "📈 Графики", "⚠️ Аномалии и кластеры", "🔍 ABC и прогнозы", "💡 Рекомендации"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Обзор", "📈 Графики", "⚠️ Аномалии и кластеры", "🔍 ABC и Pareto", "💡 Рекомендации"])
 
 with tab1:
     col1, col2, col3, col4 = st.columns(4)
@@ -237,6 +237,25 @@ with tab2:
     fig_heat = px.imshow(pivot.values, x=pivot.columns, y=pivot.index, color_continuous_scale='YlOrRd', text_auto=True, aspect="auto")
     fig_heat.update_layout(height=600)
     st.plotly_chart(fig_heat, use_container_width=True, config=plotly_config)
+    
+    st.markdown("---")
+    st.subheader("📊 Средние потери по дням недели")
+    df_day = df.copy()
+    df_day['ДеньНедели'] = df_day['Дата'].dt.weekday.map(day_map)
+    day_avg = df_day.groupby('ДеньНедели')['СуммаПотерь'].mean().reindex(['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'])
+    fig_day_avg = px.bar(day_avg.reset_index(), x='ДеньНедели', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='Blues')
+    fig_day_avg.update_traces(texttemplate='%{text:.0f} ₽', textposition='outside')
+    fig_day_avg.update_layout(height=500, title="Среднедневные потери")
+    st.plotly_chart(fig_day_avg, use_container_width=True, config=plotly_config)
+    
+    st.subheader("🔥 Топ-5 категорий в динамике (по месяцам)")
+    top5_cats = суммарные_потери.head(5)['Категория'].tolist()
+    df_top5 = df[df['Категория'].isin(top5_cats)].copy()
+    df_top5['Месяц'] = df_top5['Дата'].dt.to_period('M').astype(str)
+    monthly_top5 = df_top5.groupby(['Месяц', 'Категория'])['СуммаПотерь'].sum().reset_index()
+    fig_top5_dynamic = px.line(monthly_top5, x='Месяц', y='СуммаПотерь', color='Категория', markers=True, title="Динамика топ-5 категорий")
+    fig_top5_dynamic.update_layout(height=600)
+    st.plotly_chart(fig_top5_dynamic, use_container_width=True, config=plotly_config)
 
 with tab3:
     with st.spinner("Анализируем аномалии..."):
@@ -291,11 +310,27 @@ with tab4:
     with col2:
         fig_abc = px.bar(abc, x='Категория', y='Накопительная_доля', color='ABC',
                          color_discrete_map={'A': '#ef4444', 'B': '#f59e0b', 'C': '#10b981'})
-        fig_abc.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="80%")
-        fig_abc.add_hline(y=95, line_dash="dash", line_color="orange", annotation_text="95%")
+        fig_abc.add_hline(y=80, line_dash="dash", line_color="red")
+        fig_abc.add_hline(y=95, line_dash="dash", line_color="orange")
         st.plotly_chart(fig_abc, use_container_width=True, config=plotly_config)
     
-    st.info("**A-класс** — 80% потерь. **B** — следующий 15%. **C** — остальное.")
+    st.markdown("---")
+    st.subheader("🏪 Pareto-анализ магазинов")
+    pareto_store = потери_по_магазинам.copy()
+    pareto_store['Доля_%'] = (pareto_store['СуммаПотерь'] / pareto_store['СуммаПотерь'].sum() * 100).round(2)
+    pareto_store['Накопительная_доля'] = pareto_store['Доля_%'].cumsum()
+    pareto_store['Pareto'] = pareto_store['Накопительная_доля'].apply(lambda x: '80%' if x <= 80 else '95%' if x <= 95 else '100%')
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.dataframe(pareto_store[['Магазин', 'СуммаПотерь', 'Доля_%', 'Накопительная_доля', 'Pareto']], use_container_width=True)
+    with col2:
+        fig_pareto = px.bar(pareto_store, x='Магазин', y='Накопительная_доля', color='Pareto',
+                            color_discrete_map={'80%': '#ef4444', '95%': '#f59e0b', '100%': '#10b981'})
+        fig_pareto.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="80% потерь")
+        st.plotly_chart(fig_pareto, use_container_width=True, config=plotly_config)
+    
+    st.info("**Pareto по магазинам:** Какие магазины дают 80% всех потерь — приоритет для аудита.")
 
     st.markdown("---")
     st.subheader("📈 Прогноз по топ-3 категориям на 7 дней")
@@ -330,20 +365,15 @@ with tab5:
     st.subheader("💡 Персонализированные рекомендации")
     top_cat = суммарные_потери.iloc[0]['Категория'] if len(суммарные_потери) > 0 else "—"
     top_store = потери_по_магазинам.iloc[0]['Магазин'] if len(потери_по_магазинам) > 0 else "—"
-    peak_day = pivot.sum().idxmax() if 'pivot' in locals() else "—"
+    peak_day = day_avg.idxmax() if 'day_avg' in locals() else "—"
     
-    рекомендации = [
-        f"🔴 **Высокий приоритет:** Усилить контроль в категории «{top_cat}» — лидер по потерям.",
-        f"🔴 **Высокий приоритет:** Провести аудит магазина «{top_store}» — максимальные потери.",
-        f"🟡 **Пик потерь:** В день «{peak_day}» — добавить проверки полок и приёмки.",
-        f"🟢 **ABC-анализ:** 80% потерь в A-классе — фокус здесь даст максимальную экономию.",
-        f"💡 **Прогноз:** Следите за ростом в топ-категориях на следующей неделе.",
-        f"💰 **Потенциальная экономия:** 20–30% при внедрении мер контроля."
-    ]
-    
-    for r in рекомендации:
-        st.markdown(f"• {r}")
-    
+    st.error(f"🔴 **Высокий приоритет:** Усилить контроль в категории «{top_cat}» — лидер по потерям.")
+    st.error(f"🔴 **Высокий приоритет:** Провести аудит магазина «{top_store}» — максимальные потери (Pareto 80%).")
+    st.warning(f"🟡 **Средний приоритет:** Пик потерь в день «{peak_day}» — добавить проверки полок и приёмки.")
+    st.warning(f"🟡 **Средний приоритет:** Фокус на A-классе (ABC-анализ) — там 80% потерь.")
+    st.success(f"🟢 **Проактивно:** Следите за прогнозом роста в топ-категориях на следующей неделе.")
+    st.success(f"💰 **Потенциальная экономия:** 20–30% при внедрении мер контроля.")
+
     st.markdown("---")
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -352,8 +382,15 @@ with tab5:
         df_export.to_excel(writer, sheet_name='Данные', index=False)
         суммарные_потери.to_excel(writer, sheet_name='ПоКатегориям', index=False)
         потери_по_магазинам.to_excel(writer, sheet_name='ПоМагазинам', index=False)
-        abc.to_excel(writer, sheet_name='ABC_анализ', index=False)
-        pd.DataFrame(рекомендации, columns=['Рекомендация']).to_excel(writer, sheet_name='Рекомендации', index=False)
+        abc.to_excel(writer, sheet_name='ABC_категории', index=False)
+        pareto_store.to_excel(writer, sheet_name='Pareto_магазины', index=False)
+        pd.DataFrame([f"Рекомендация: {r}" for r in [
+            f"Усилить контроль в категории {top_cat}",
+            f"Аудит магазина {top_store}",
+            f"Проверки в день {peak_day}",
+            "Фокус на A-классе",
+            "Следить за прогнозом"
+        ]], columns=['Рекомендация']).to_excel(writer, sheet_name='Рекомендации', index=False)
     buffer.seek(0)
     
     st.download_button(
