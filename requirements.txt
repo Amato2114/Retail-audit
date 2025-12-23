@@ -5,4 +5,4 @@ plotly
 prophet
 scikit-learn
 openpyxl
-kaleido
+kaleido==0.2.1
