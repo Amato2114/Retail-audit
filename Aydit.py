@@ -58,16 +58,13 @@ def сгенерировать_тестовые_данные():
 def detect_columns(df):
     df = df.copy()
     
-    # Приводим имена колонок к нижнему регистру для поиска
     lower_columns = {col.lower(): col for col in df.columns}
     
-    # Кандидаты по ключевым словам
     date_candidates = [col for col in lower_columns if 'дат' in col or 'date' in col]
     category_candidates = [col for col in lower_columns if 'кат' in col or 'cat' in col or 'товар' in col or 'продукт' in col]
     loss_candidates = [col for col in lower_columns if 'пот' in col or 'loss' in col or 'сум' in col or 'убыт' in col or 'спис' in col]
     store_candidates = [col for col in lower_columns if 'маг' in col or 'store' in col or 'филиал' in col]
     
-    # Если не нашли по словам — по типам данных
     if not date_candidates:
         for col in df.columns:
             try:
@@ -97,7 +94,6 @@ def detect_columns(df):
                 store_candidates = [col.lower()]
                 break
     
-    # Выбираем первые кандидаты
     if not date_candidates or not category_candidates or not loss_candidates or not store_candidates:
         st.error("❌ Не удалось автоматически распознать все обязательные колонки. Проверьте файл или переименуйте колонки ближе к 'Дата', 'Категория', 'СуммаПотерь', 'Магазин'.")
         st.stop()
@@ -109,7 +105,6 @@ def detect_columns(df):
     
     st.success(f"✅ Автоматически распознаны колонки:\n- Дата: **{date_col}**\n- Категория: **{category_col}**\n- СуммаПотерь: **{loss_col}**\n- Магазин: **{store_col}**")
     
-    # Переименовываем для унификации
     df = df.rename(columns={
         date_col: 'Дата',
         category_col: 'Категория',
@@ -119,7 +114,7 @@ def detect_columns(df):
     
     return df
 
-# Функция анализа (полная)
+# Основная функция анализа
 def выполнить_анализ(df_original):
     df = df_original.copy()
     df['Дата'] = pd.to_datetime(df['Дата'], dayfirst=True, errors='coerce')
@@ -170,13 +165,6 @@ def выполнить_анализ(df_original):
     предыдущие_потери = df_prev['СуммаПотерь'].sum()
     изменение = ((текущие_потери - предыдущие_потери) / предыдущие_потери * 100) if предыдущие_потери > 0 else 0
     
-    # Аномалии (scikit-learn)
-    df['Индекс'] = np.arange(len(df))
-    X_anom = df[['Индекс', 'СуммаПотерь']].values
-    модель_anom = IsolationForest(contamination=0.1, random_state=42)
-    df['Аномалия'] = модель_anom.fit_predict(X_anom)
-    аномалии = df[df['Аномалия'] == -1]
-    
     # Метрики
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -186,7 +174,7 @@ def выполнить_анализ(df_original):
     with col3:
         st.metric("Магазинов", df['Магазин'].nunique())
     with col4:
-        st.metric("Аномалий (AI)", len(аномалии))
+        st.metric("Записей", len(df))
     
     st.markdown("---")
     
@@ -233,40 +221,18 @@ def выполнить_анализ(df_original):
         buf_month.seek(0)
         st.download_button("📥 Скачать график по месяцам (PNG)", buf_month, file_name="динамика_по_месяцам.png", mime="image/png")
     except Exception as e:
-        st.warning(f"⚠️ Не удалось экспортировать график: {str(e)}. Проверьте установку Kaleido и Chrome (добавьте packages.txt).")
+        st.warning(f"⚠️ Экспорт PNG недоступен: {str(e)}")
     
-    # 🌡️ Тепловая карта БЕЗ locale
+    # Тепловая карта
     st.subheader("🌡️ Тепловая карта потерь (категории × дни недели)")
     df_heat = df.copy()
-    # map weekday -> русские названия, вместо day_name(locale='ru_RU')
-    day_map = {
-        0: 'Понедельник',
-        1: 'Вторник',
-        2: 'Среда',
-        3: 'Четверг',
-        4: 'Пятница',
-        5: 'Суббота',
-        6: 'Воскресенье',
-    }
+    day_map = {0: 'Понедельник', 1: 'Вторник', 2: 'Среда', 3: 'Четверг', 4: 'Пятница', 5: 'Суббота', 6: 'Воскресенье'}
     df_heat['ДеньНедели'] = df_heat['Дата'].dt.weekday.map(day_map)
-    pivot_heat = df_heat.pivot_table(
-        values='СуммаПотерь',
-        index='Категория',
-        columns='ДеньНедели',
-        aggfunc='sum',
-        fill_value=0
-    )
+    pivot_heat = df_heat.pivot_table(values='СуммаПотерь', index='Категория', columns='ДеньНедели', aggfunc='sum', fill_value=0)
     дни_порядок = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
     pivot_heat = pivot_heat.reindex(columns=дни_порядок)
     
-    fig_heat = px.imshow(
-        pivot_heat.values,
-        x=дни_порядок,
-        y=pivot_heat.index,
-        color_continuous_scale='YlOrRd',
-        text_auto=True,
-        aspect="auto"
-    )
+    fig_heat = px.imshow(pivot_heat.values, x=дни_порядок, y=pivot_heat.index, color_continuous_scale='YlOrRd', text_auto=True, aspect="auto")
     fig_heat.update_layout(height=600)
     st.plotly_chart(fig_heat, width='stretch')
     
@@ -276,18 +242,41 @@ def выполнить_анализ(df_original):
         buf_heat.seek(0)
         st.download_button("📥 Скачать тепловую карту (PNG)", buf_heat, file_name="тепловая_карта_потерь.png", mime="image/png")
     except Exception as e:
-        st.warning(f"⚠️ Не удалось экспортировать график: {str(e)}. Проверьте установку Kaleido и Chrome (добавьте packages.txt).")
+        st.warning(f"⚠️ Экспорт PNG недоступен: {str(e)}")
     
-    # Аномалии
-    if len(аномалии) > 0:
-        st.subheader("⚠️ Выявленные аномалии (Isolation Forest)")
-        аномалии_disp = аномалии.copy()
-        аномалии_disp['Дата'] = аномалии_disp['Дата'].dt.strftime('%d.%m.%Y')
-        st.dataframe(аномалии_disp[['Дата', 'Категория', 'СуммаПотерь', 'Магазин']], width='stretch')
+    st.markdown("---")
+    
+    # УЛУЧШЕННАЯ ДЕТЕКЦИЯ АНОМАЛИЙ
+    st.subheader("⚠️ Улучшенная детекция аномалий (Isolation Forest + признаки)")
+    
+    df_anom = df.copy()
+    df_anom['ДеньНедели'] = df_anom['Дата'].dt.weekday
+    df_anom['Месяц'] = df_anom['Дата'].dt.month
+    df_anom['ЛогПотерь'] = np.log1p(df_anom['СуммаПотерь'])
+    
+    top_categories = df_anom['Категория'].value_counts().head(10).index
+    top_stores = df_anom['Магазин'].value_counts().head(10).index
+    df_anom['Категория_топ'] = df_anom['Категория'].where(df_anom['Категория'].isin(top_categories), 'Другие')
+    df_anom['Магазин_топ'] = df_anom['Магазин'].where(df_anom['Магазин'].isin(top_stores), 'Другие')
+    
+    features = pd.get_dummies(df_anom[['ЛогПотерь', 'ДеньНедели', 'Месяц', 'Категория_топ', 'Магазин_топ']])
+    
+    if len(features) >= 10:
+        model_anom = IsolationForest(contamination=0.05, random_state=42)
+        df_anom['Аномалия'] = model_anom.fit_predict(features)
+        аномалии = df_anom[df_anom['Аномалия'] == -1]
+        
+        if len(аномалии) > 0:
+            аномалии_disp = аномалии.copy()
+            аномалии_disp['Дата'] = аномалии_disp['Дата'].dt.strftime('%d.%m.%Y')
+            st.dataframe(аномалии_disp[['Дата', 'Категория', 'СуммаПотерь', 'Магазин']], width='stretch')
+            st.metric("Выявлено аномалий (улучшенный AI)", len(аномалии))
+        else:
+            st.success("✅ Улучшенный анализ: аномалий не выявлено")
     else:
-        st.success("✅ Аномалий не выявлено")
+        st.info("ℹ️ Недостаточно данных для улучшенной детекции аномалий")
     
-    # Кластеризация (scikit-learn)
+    # Кластеризация
     if len(df) >= 3:
         X_cluster = df[['СуммаПотерь']].values
         kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
@@ -305,20 +294,90 @@ def выполнить_анализ(df_original):
         st.subheader("🧩 Кластеры потерь (K-Means)")
         st.dataframe(кластеры, width='stretch')
     
-    # Прогноз с Prophet
-    ежедневные_потери = df.groupby('Дата')['СуммаПотерь'].sum().reset_index()
-    ежедневные_потери.columns = ['ds', 'y']
+    st.markdown("---")
     
-    прогноз_df = None
+    # ABC-АНАЛИЗ КАТЕГОРИЙ
+    st.subheader("📊 ABC-анализ категорий по потерям")
+    
+    abc_data = суммарные_потери.copy()
+    abc_data = abc_data.sort_values('СуммаПотерь', ascending=False)
+    abc_data['Доля_%'] = abc_data['СуммаПотерь'] / abc_data['СуммаПотерь'].sum() * 100
+    abc_data['Накопительная_доля'] = abc_data['Доля_%'].cumsum()
+    
+    def assign_abc(cum_pct):
+        if cum_pct <= 80:
+            return 'A'
+        elif cum_pct <= 95:
+            return 'B'
+        else:
+            return 'C'
+    
+    abc_data['ABC_класс'] = abc_data['Накопительная_доля'].apply(assign_abc)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.dataframe(abc_data[['Категория', 'СуммаПотерь', 'Доля_%', 'Накопительная_доля', 'ABC_класс']].round(2), width='stretch')
+    with col2:
+        fig_abc = px.bar(abc_data, x='Категория', y='Накопительная_доля',
+                         color='ABC_класс', color_discrete_map={'A': '#ef4444', 'B': '#f59e0b', 'C': '#10b981'},
+                         title='Накопительная доля потерь')
+        fig_abc.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="80% (A)")
+        fig_abc.add_hline(y=95, line_dash="dash", line_color="orange", annotation_text="95% (A+B)")
+        st.plotly_chart(fig_abc, width='stretch')
+    
+    st.info("**A-класс** — 80% потерь, критичные категории. **B** — средний приоритет. **C** — низкий.")
+    
+    # ПРОГНОЗ ПО ТОП-3 КАТЕГОРИЯМ
+    st.markdown("---")
+    st.subheader("📈 Прогноз потерь по топ-3 категориям (Prophet)")
+    
+    top3_categories = суммарные_потери.head(3)['Категория'].tolist()
+    ежедневные_потери = df.groupby('Дата')['СуммаПотерь'].sum().reset_index()
+    
+    if len(top3_categories) >= 1 and len(ежедневные_потери) >= 30:
+        fig_multi = px.line(title='Прогноз потерь по топ-3 категориям на 7 дней')
+        forecast_tables = {}
+        
+        for cat in top3_categories:
+            df_cat = df[df['Категория'] == cat].groupby('Дата')['СуммаПотерь'].sum().reset_index()
+            df_cat.columns = ['ds', 'y']
+            
+            if len(df_cat) >= 14:
+                m = Prophet(daily_seasonality=True, weekly_seasonality=True, yearly_seasonality=False)
+                m.fit(df_cat)
+                future_cat = m.make_future_dataframe(periods=7)
+                forecast_cat = m.predict(future_cat)
+                
+                fig_multi.add_scatter(x=df_cat['ds'], y=df_cat['y'], mode='lines+markers', name=f'{cat} (факт)')
+                fig_multi.add_scatter(x=forecast_cat['ds'], y=forecast_cat['yhat'], mode='lines', name=f'{cat} (прогноз)', line=dict(dash='dash'))
+                fig_multi.add_scatter(x=forecast_cat['ds'], y=forecast_cat['yhat_lower'], fill=None, mode='lines', line_color='rgba(0,0,0,0)', showlegend=False)
+                fig_multi.add_scatter(x=forecast_cat['ds'], y=forecast_cat['yhat_upper'], fill='tonexty', mode='lines', fillcolor='rgba(255,99,71,0.2)', line_color='rgba(0,0,0,0)', showlegend=False)
+                
+                fc_table = forecast_cat[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(7).round(2)
+                fc_table['ds'] = fc_table['ds'].dt.strftime('%d.%m.%Y')
+                fc_table = fc_table.rename(columns={'ds': 'Дата', 'yhat': 'Прогноз', 'yhat_lower': 'Мин', 'yhat_upper': 'Макс'})
+                forecast_tables[cat] = fc_table
+        
+        fig_multi.update_layout(height=600, yaxis_title='Сумма потерь, ₽')
+        st.plotly_chart(fig_multi, width='stretch')
+        
+        if forecast_tables:
+            for cat, table in forecast_tables.items():
+                st.markdown(f"**Прогноз для категории: {cat}**")
+                st.dataframe(table, width='stretch')
+    else:
+        st.info("ℹ️ Недостаточно данных для прогноза по топ-3 категориям")
+    
+    # Прогноз общей суммы (старый)
+    ежедневные_потери.columns = ['ds', 'y']
     if len(ежедневные_потери) >= 14:
-        st.subheader("📈 Динамика и прогноз на 7 дней (Prophet)")
+        st.subheader("📈 Общий прогноз на 7 дней (Prophet)")
         модель_prophet = Prophet(daily_seasonality=True, weekly_seasonality=True, yearly_seasonality=False)
         модель_prophet.fit(ежедневные_потери)
         future = модель_prophet.make_future_dataframe(periods=7)
         forecast = модель_prophet.predict(future)
-        прогноз_df = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(7).rename(columns={'ds': 'Дата', 'yhat': 'Прогноз'}).round(2)
         
-        fig_prog = px.line(ежедневные_потери, x='ds', y='y', title='Динамика потерь с AI-прогнозом (Prophet)', labels={'y': 'Сумма потерь, ₽'})
+        fig_prog = px.line(ежедневные_потери, x='ds', y='y', title='Общий прогноз', labels={'y': 'Сумма потерь, ₽'})
         fig_prog.add_scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Прогноз', line=dict(color='#f87171', dash='dash'))
         fig_prog.add_scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='Мин', line=dict(color='rgba(0,0,0,0)'), showlegend=False)
         fig_prog.add_scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='Макс', fill='tonexty', fillcolor='rgba(248, 113, 113, 0.2)', line=dict(color='rgba(0,0,0,0)'), showlegend=False)
@@ -329,76 +388,49 @@ def выполнить_анализ(df_original):
         try:
             fig_prog.write_image(buf_prog, format='png')
             buf_prog.seek(0)
-            st.download_button("📥 Скачать график прогноза (PNG)", buf_prog, file_name="прогноз_потерь.png", mime="image/png")
+            st.download_button("📥 Скачать общий прогноз (PNG)", buf_prog, file_name="прогноз_потерь.png", mime="image/png")
         except Exception as e:
-            st.warning(f"⚠️ Не удалось экспортировать график: {str(e)}. Проверьте установку Kaleido и Chrome (добавьте packages.txt).")
-        
-        прогноз_disp = прогноз_df.copy()
-        прогноз_disp['Дата'] = прогноз_disp['Дата'].dt.strftime('%d.%m.%Y')
-        прогноз_disp = прогноз_disp[['Дата', 'Прогноз', 'yhat_lower', 'yhat_upper']].rename(columns={'yhat_lower': 'Мин прогноз', 'yhat_upper': 'Макс прогноз'})
-        st.dataframe(прогноз_disp, width='stretch')
-    else:
-        st.warning("⚠️ Недостаточно данных для прогноза (нужно ≥14 дней).")
+            st.warning(f"⚠️ Экспорт PNG недоступен: {str(e)}")
     
-    # Персонализированные рекомендации
-    top_category = "нет данных"
-    top_category_loss = 0
-    if not суммарные_потери.empty:
-        top_row = суммарные_потери.iloc[суммарные_потери['СуммаПотерь'].idxmax()]
-        top_category = top_row['Категория']
-        top_category_loss = top_row['СуммаПотерь']
+    # Персонализированные рекомендации (обновлённые с учётом ABC)
+    top_category = суммарные_потери.iloc[0]['Категория'] if not суммарные_потери.empty else "нет данных"
+    top_category_loss = суммарные_потери.iloc[0]['СуммаПотерь'] if not суммарные_потери.empty else 0
+    top_store = потери_по_магазинам.iloc[0]['Магазин'] if not потери_по_магазинам.empty else "нет данных"
+    top_store_loss = потери_по_магазинам.iloc[0]['СуммаПотерь'] if not потери_по_магазинам.empty else 0
     
-    top_store = "нет данных"
-    top_store_loss = 0
-    if not потери_по_магазинам.empty:
-        top_row_store = потери_по_магазинам.iloc[потери_по_магазинам['СуммаПотерь'].idxmax()]
-        top_store = top_row_store['Магазин']
-        top_store_loss = top_row_store['СуммаПотерь']
-    
-    high_cluster_category = "нет данных"
-    if 'Кластер' in df.columns and 'Высокий' in df['Кластер'].values:
-        high_cluster_mode = df[df['Кластер'] == 'Высокий']['Категория'].mode()
-        high_cluster_category = high_cluster_mode[0] if len(high_cluster_mode) > 0 else "нет данных"
-    
-    peak_day = "нет данных"
-    if 'pivot_heat' in locals() and not pivot_heat.empty:
-        peak_day = pivot_heat.sum().idxmax()
+    high_cluster_category = df[df['Кластер'] == 'Высокий']['Категория'].mode()[0] if 'Кластер' in df.columns and 'Высокий' in df['Кластер'].values else "нет данных"
+    peak_day = pivot_heat.sum().idxmax() if 'pivot_heat' in locals() and not pivot_heat.empty else "нет данных"
     
     potential_save_min = round(текущие_потери * 0.20)
     potential_save_max = round(текущие_потери * 0.30)
     
-    персонализированные_рекомендации = [
-        f"🔴 **Высокий приоритет:** Усилить контроль в категории «{top_category}» — лидер по потерям ({top_category_loss:,.0f} ₽). Рекомендация: ежедневные проверки приёмки и хранения.",
-        f"🔴 **Высокий приоритет:** Провести аудит магазина «{top_store}» — максимальные потери ({top_store_loss:,.0f} ₽). Проверить процедуры списания и безопасность.",
-        f"🟡 **Средний приоритет:** Фокус на Высоком кластере (категория «{high_cluster_category}») — суммы выше среднего. Увеличить частоту инвентаризаций на 50%.",
-        f"🟡 **Средний приоритет:** Оптимизировать по тепловой карте — пик потерь в «{peak_day}». Усилить контроль в этот день (дополнительные проверки полок).",
-        f"🟢 **Проактивно:** Использовать прогноз для планирования — ожидаемый рост/спад на следующей неделе. Подготовить запас по категориям с риском.",
-        f"💰 **Потенциальная экономия:** При внедрении рекомендаций — 20–30% от текущих потерь ({potential_save_min:,.0f} – {potential_save_max:,.0f} ₽ за период)."
+    рекомендации = [
+        f"🔴 **Высокий приоритет:** Усилить контроль в категории «{top_category}» (лидер потерь: {top_category_loss:,.0f} ₽). Ежедневные проверки приёмки и хранения.",
+        f"🔴 **Высокий приоритет:** Аудит магазина «{top_store}» ({top_store_loss:,.0f} ₽ потерь). Проверить списание и безопасность.",
+        f"🟡 **Средний приоритет:** Фокус на Высоком кластере (чаще всего «{high_cluster_category}»). Увеличить инвентаризации на 50%.",
+        f"🟡 **Средний приоритет:** Пик потерь — «{peak_day}». Дополнительные проверки полок в этот день.",
+        f"🟢 **Проактивно:** По ABC-анализу приоритет на A-классе — там 80% потерь.",
+        f"💰 **Потенциальная экономия:** 20–30% от текущих потерь ({potential_save_min:,.0f} – {potential_save_max:,.0f} ₽)."
     ]
     
-    st.subheader("💡 Персонализированные AI-рекомендации по минимизации потерь")
-    for rec in персонализированные_рекомендации:
+    st.subheader("💡 Персонализированные AI-рекомендации")
+    for rec in рекомендации:
         st.markdown(rec)
     
-    # Полный отчёт
+    # Экспорт отчёта
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df_export = df.copy()
         df_export['Дата'] = df_export['Дата'].dt.strftime('%d.%m.%Y')
         df_export.to_excel(writer, sheet_name='ИсходныеДанные', index=False)
-        суммарные_потери.to_excel(writer, sheet_name='ПоКатегориям')
-        потери_по_магазинам.to_excel(writer, sheet_name='ПоМагазинам')
-        if len(аномалии) > 0:
-            аномалии_exp = аномалии.copy()
-            аномалии_exp['Дата'] = аномалии_exp['Дата'].dt.strftime('%d.%m.%Y')
-            аномалии_exp.to_excel(writer, sheet_name='Аномалии', index=False)
+        суммарные_потери.to_excel(writer, sheet_name='ПоКатегориям', index=False)
+        потери_по_магазинам.to_excel(writer, sheet_name='ПоМагазинам', index=False)
+        abc_data.to_excel(writer, sheet_name='ABC_анализ', index=False)
+        if len(аномалии) > 0 if 'аномалии' in locals() else False:
+            аномалии.to_excel(writer, sheet_name='Аномалии', index=False)
         if 'кластеры' in locals():
-            кластеры.to_excel(writer, sheet_name='Кластеры')
-        if прогноз_df is not None:
-            прогноз_exp = прогноз_df.copy()
-            прогноз_exp['Дата'] = прогноз_exp['Дата'].dt.strftime('%d.%m.%Y')
-            прогноз_exp.to_excel(writer, sheet_name='Прогноз')
-        pd.DataFrame(персонализированные_рекомендации, columns=['Рекомендация']).to_excel(writer, sheet_name='Рекомендации')
+            кластеры.to_excel(writer, sheet_name='Кластеры', index=False)
+        pd.DataFrame(рекомендации, columns=['Рекомендация']).to_excel(writer, sheet_name='Рекомендации', index=False)
     buffer.seek(0)
     
     st.download_button(
@@ -411,15 +443,13 @@ def выполнить_анализ(df_original):
 # Основной поток
 if uploaded_file is not None:
     try:
-        # Чтение всех листов, берём первый с данными
         xls = pd.ExcelFile(uploaded_file)
         sheet_name = xls.sheet_names[0]
         df = pd.read_excel(uploaded_file, sheet_name=sheet_name, engine='openpyxl')
         df = detect_columns(df)
         выполнить_анализ(df)
     except Exception as e:
-        st.error(f"❌ Ошибка при чтении или распознавании файла: {str(e)}")
-        st.info("💡 Проверьте формат Excel и наличие обязательных колонок")
+        st.error(f"❌ Ошибка при чтении файла: {str(e)}")
 elif st.session_state.get('use_test', False):
     df = сгенерировать_тестовые_данные()
     df['Дата'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y')
