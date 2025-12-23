@@ -11,10 +11,10 @@ import io
 # Настройка страницы
 st.set_page_config(page_title="RetailLoss Sentinel v8", layout="wide", page_icon="🛡️")
 
-# Заголовок и описание
+# Заголовок
 st.title("🛡️ RetailLoss Sentinel v8")
 st.markdown("**Инновационный AI-анализатор потерь для гипермаркетов**")
-st.markdown("Авто-распознавание колонок • Улучшенный ML • ABC/Pareto • Прогноз по категориям")
+st.markdown("What-if сценарии • Pareto • ABC • Прогноз по категориям • Улучшенный ML")
 
 # Сайдбар
 with st.sidebar:
@@ -27,9 +27,8 @@ with st.sidebar:
     
     st.markdown("---")
     st.success("✅ Все библиотеки готовы!")
-    st.info("Авто-распознавание колонок по ключевым словам и типам данных.")
 
-# Кэшированные тестовые данные (300 строк)
+# Кэшированные тестовые данные
 @st.cache_data
 def сгенерировать_тестовые_данные():
     np.random.seed(42)
@@ -117,7 +116,7 @@ else:
     st.dataframe(preview_df.head(20), width='stretch')
     st.stop()
 
-# Фильтры
+# Фильтры + What-if слайдеры
 with st.sidebar:
     st.markdown("---")
     st.subheader("🔧 Фильтры")
@@ -128,6 +127,12 @@ with st.sidebar:
     min_date = df_raw['Дата'].min().date()
     max_date = df_raw['Дата'].max().date()
     выбранный_период = st.date_input("Период дат", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+    
+    st.markdown("---")
+    st.subheader("🧮 What-if сценарии (потенциальная экономия)")
+    reduce_a = st.slider("Снижение потерь в A-классе категорий, %", 0, 50, 10)
+    reduce_peak = st.slider("Снижение потерь в пиковые дни недели, %", 0, 50, 15)
+    reduce_top_store = st.slider("Снижение потерь в топ-магазине (Pareto 80%), %", 0, 50, 20)
 
 # Применение фильтров
 df = df_raw.copy()
@@ -141,14 +146,37 @@ if df.empty:
     st.warning("⚠️ Нет данных по выбранным фильтрам.")
     st.stop()
 
-# Сравнение с предыдущим периодом
-длина_периода = (выбранный_период[1] - выбранный_период[0]).days + 1
-prev_start = выбранный_период[0] - timedelta(days=длина_периода)
-prev_end = выбранный_период[0] - timedelta(days=1)
-df_prev = df_raw[(df_raw['Дата'].dt.date >= prev_start) & (df_raw['Дата'].dt.date <= prev_end)]
-изменение = ((df['СуммаПотерь'].sum() - df_prev['СуммаПотерь'].sum()) / df_prev['СуммаПотерь'].sum() * 100) if len(df_prev) > 0 and df_prev['СуммаПотерь'].sum() > 0 else 0
-
+# Основные расчёты
 текущие_потери = df['СуммаПотерь'].sum()
+
+суммарные_потери = df.groupby('Категория')['СуммаПотерь'].sum().reset_index().sort_values('СуммаПотерь', ascending=False)
+потери_по_магазинам = df.groupby('Магазин')['СуммаПотерь'].sum().reset_index().sort_values('СуммаПотерь', ascending=False)
+
+# ABC и Pareto (вынесены в глобальную область, чтобы были доступны везде)
+abc = суммарные_потери.copy()
+abc['Доля_%'] = (abc['СуммаПотерь'] / текущие_потери * 100).round(2)
+abc['Накопительная_доля'] = abc['Доля_%'].cumsum()
+abc['ABC'] = abc['Накопительная_доля'].apply(lambda x: 'A' if x <= 80 else 'B' if x <= 95 else 'C')
+
+pareto_store = потери_по_магазинам.copy()
+pareto_store['Доля_%'] = (pareto_store['СуммаПотерь'] / текущие_потери * 100).round(2)
+pareto_store['Накопительная_доля'] = pareto_store['Доля_%'].cumsum()
+pareto_store['Pareto'] = pareto_store['Накопительная_доля'].apply(lambda x: '80%' if x <= 80 else '95%' if x <= 95 else '100%')
+
+# What-if расчёты
+a_class_loss = abc[abc['ABC'] == 'A']['СуммаПотерь'].sum()
+экономия_a = round(a_class_loss * reduce_a / 100)
+
+df_day = df.copy()
+day_map = {0: 'Пн', 1: 'Вт', 2: 'Ср', 3: 'Чт', 4: 'Пт', 5: 'Сб', 6: 'Вс'}
+df_day['День'] = df_day['Дата'].dt.weekday.map(day_map)
+peak_days_loss = df_day.groupby('День')['СуммаПотерь'].sum().nlargest(2).sum()
+экономия_peak = round(peak_days_loss * reduce_peak / 100)
+
+top_store_loss = pareto_store[pareto_store['Pareto'] == '80%']['СуммаПотерь'].sum()
+экономия_store = round(top_store_loss * reduce_top_store / 100)
+
+общая_экономия = экономия_a + экономия_peak + экономия_store
 
 # Большая центральная метрика
 st.markdown(f"""
@@ -159,24 +187,25 @@ st.markdown(f"""
         <p style='font-size: 20px; color: gray; margin: 5px 0;'>
             Общие потери за выбранный период
         </p>
-        <p style='font-size: 18px; color: {"#ef4444" if изменение > 0 else "#10b981"}; margin: 0;'>
-            {изменение:+.1f}% к предыдущему периоду
-        </p>
     </div>
 """, unsafe_allow_html=True)
 
+# What-if результаты
+st.markdown("### 💰 Потенциальная экономия по What-if сценариям")
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("A-класс категорий", f"{экономия_a:,.0f} ₽", delta=f"-{reduce_a}%")
+with col2:
+    st.metric("Пиковые дни", f"{экономия_peak:,.0f} ₽", delta=f"-{reduce_peak}%")
+with col3:
+    st.metric("Топ-магазин (Pareto)", f"{экономия_store:,.0f} ₽", delta=f"-{reduce_top_store}%")
+with col4:
+    st.metric("**Общая экономия**", f"{общая_экономия:,.0f} ₽", delta="при реализации всех мер")
+
 st.markdown("---")
 
-# Конфиг для встроенной кнопки скачивания PNG
-plotly_config = {
-    "toImageButtonOptions": {
-        "format": "png",
-        "filename": "график_потерь",
-        "height": 600,
-        "width": 1000,
-        "scale": 2
-    }
-}
+# Конфиг для скачивания графиков
+plotly_config = {"toImageButtonOptions": {"format": "png", "filename": "график", "height": 600, "width": 1000, "scale": 2}}
 
 # Табы
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Обзор", "📈 Графики", "⚠️ Аномалии и кластеры", "🔍 ABC и Pareto", "💡 Рекомендации"])
@@ -184,7 +213,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Обзор", "📈 Графики"
 with tab1:
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Общие потери", f"{текущие_потери:,.0f} ₽", delta=f"{изменение:+.1f}%")
+        st.metric("Общие потери", f"{текущие_потери:,.0f} ₽")
     with col2:
         st.metric("Категорий", df['Категория'].nunique())
     with col3:
@@ -192,21 +221,16 @@ with tab1:
     with col4:
         st.metric("Записей", len(df))
     
-    st.markdown("---")
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("🔥 Потери по категориям")
-        суммарные_потери = df.groupby('Категория')['СуммаПотерь'].sum().reset_index().sort_values('СуммаПотерь', ascending=False)
         fig_cat = px.bar(суммарные_потери, x='Категория', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='YlOrRd')
         fig_cat.update_traces(texttemplate='%{text:.0f} ₽', textposition='outside')
-        fig_cat.update_layout(height=500, showlegend=False)
         st.plotly_chart(fig_cat, use_container_width=True, config=plotly_config)
     with col2:
         st.subheader("🏪 Потери по магазинам")
-        потери_по_магазинам = df.groupby('Магазин')['СуммаПотерь'].sum().reset_index().sort_values('СуммаПотерь', ascending=False)
         fig_store = px.bar(потери_по_магазинам, x='Магазин', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='YlOrRd')
         fig_store.update_traces(texttemplate='%{text:.0f} ₽', textposition='outside')
-        fig_store.update_layout(height=500, showlegend=False)
         st.plotly_chart(fig_store, use_container_width=True, config=plotly_config)
 
 with tab2:
@@ -217,7 +241,6 @@ with tab2:
         df_month['Месяц'] = df_month['Дата'].dt.to_period('M').astype(str)
         monthly = df_month.groupby('Месяц')['СуммаПотерь'].sum().reset_index()
         fig_monthly = px.line(monthly, x='Месяц', y='СуммаПотерь', markers=True)
-        fig_monthly.update_layout(height=450)
         st.plotly_chart(fig_monthly, use_container_width=True, config=plotly_config)
     with col2:
         st.subheader("🗓️ Динамика по кварталам")
@@ -225,36 +248,29 @@ with tab2:
         df_quarter['Квартал'] = df_quarter['Дата'].dt.to_period('Q').astype(str)
         quarterly = df_quarter.groupby('Квартал')['СуммаПотерь'].sum().reset_index()
         fig_quarterly = px.line(quarterly, x='Квартал', y='СуммаПотерь', markers=True)
-        fig_quarterly.update_layout(height=450)
         st.plotly_chart(fig_quarterly, use_container_width=True, config=plotly_config)
     
     st.subheader("🌡️ Тепловая карта потерь (категории × дни недели)")
     df_heat = df.copy()
-    day_map = {0: 'Пн', 1: 'Вт', 2: 'Ср', 3: 'Чт', 4: 'Пт', 5: 'Сб', 6: 'Вс'}
     df_heat['День'] = df_heat['Дата'].dt.weekday.map(day_map)
     pivot = df_heat.pivot_table(values='СуммаПотерь', index='Категория', columns='День', aggfunc='sum', fill_value=0)
     pivot = pivot[['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']]
-    fig_heat = px.imshow(pivot.values, x=pivot.columns, y=pivot.index, color_continuous_scale='YlOrRd', text_auto=True, aspect="auto")
-    fig_heat.update_layout(height=600)
+    fig_heat = px.imshow(pivot.values, x=pivot.columns, y=pivot.index, color_continuous_scale='YlOrRd', text_auto=True)
     st.plotly_chart(fig_heat, use_container_width=True, config=plotly_config)
     
     st.markdown("---")
     st.subheader("📊 Средние потери по дням недели")
-    df_day = df.copy()
-    df_day['ДеньНедели'] = df_day['Дата'].dt.weekday.map(day_map)
-    day_avg = df_day.groupby('ДеньНедели')['СуммаПотерь'].mean().reindex(['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'])
-    fig_day_avg = px.bar(day_avg.reset_index(), x='ДеньНедели', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='Blues')
+    day_avg = df_day.groupby('День')['СуммаПотерь'].mean().reindex(['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'])
+    fig_day_avg = px.bar(day_avg.reset_index(), x='День', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='Blues')
     fig_day_avg.update_traces(texttemplate='%{text:.0f} ₽', textposition='outside')
-    fig_day_avg.update_layout(height=500, title="Среднедневные потери")
     st.plotly_chart(fig_day_avg, use_container_width=True, config=plotly_config)
     
-    st.subheader("🔥 Топ-5 категорий в динамике (по месяцам)")
+    st.subheader("🔥 Топ-5 категорий в динамике")
     top5_cats = суммарные_потери.head(5)['Категория'].tolist()
     df_top5 = df[df['Категория'].isin(top5_cats)].copy()
     df_top5['Месяц'] = df_top5['Дата'].dt.to_period('M').astype(str)
     monthly_top5 = df_top5.groupby(['Месяц', 'Категория'])['СуммаПотерь'].sum().reset_index()
-    fig_top5_dynamic = px.line(monthly_top5, x='Месяц', y='СуммаПотерь', color='Категория', markers=True, title="Динамика топ-5 категорий")
-    fig_top5_dynamic.update_layout(height=600)
+    fig_top5_dynamic = px.line(monthly_top5, x='Месяц', y='СуммаПотерь', color='Категория', markers=True)
     st.plotly_chart(fig_top5_dynamic, use_container_width=True, config=plotly_config)
 
 with tab3:
@@ -299,11 +315,6 @@ with tab3:
 
 with tab4:
     st.subheader("📊 ABC-анализ категорий")
-    abc = суммарные_потери.copy()
-    abc['Доля_%'] = (abc['СуммаПотерь'] / abc['СуммаПотерь'].sum() * 100).round(2)
-    abc['Накопительная_доля'] = abc['Доля_%'].cumsum()
-    abc['ABC'] = abc['Накопительная_доля'].apply(lambda x: 'A' if x <= 80 else 'B' if x <= 95 else 'C')
-    
     col1, col2 = st.columns(2)
     with col1:
         st.dataframe(abc[['Категория', 'СуммаПотерь', 'Доля_%', 'Накопительная_доля', 'ABC']], use_container_width=True)
@@ -316,22 +327,15 @@ with tab4:
     
     st.markdown("---")
     st.subheader("🏪 Pareto-анализ магазинов")
-    pareto_store = потери_по_магазинам.copy()
-    pareto_store['Доля_%'] = (pareto_store['СуммаПотерь'] / pareto_store['СуммаПотерь'].sum() * 100).round(2)
-    pareto_store['Накопительная_доля'] = pareto_store['Доля_%'].cumsum()
-    pareto_store['Pareto'] = pareto_store['Накопительная_доля'].apply(lambda x: '80%' if x <= 80 else '95%' if x <= 95 else '100%')
-    
     col1, col2 = st.columns(2)
     with col1:
         st.dataframe(pareto_store[['Магазин', 'СуммаПотерь', 'Доля_%', 'Накопительная_доля', 'Pareto']], use_container_width=True)
     with col2:
         fig_pareto = px.bar(pareto_store, x='Магазин', y='Накопительная_доля', color='Pareto',
                             color_discrete_map={'80%': '#ef4444', '95%': '#f59e0b', '100%': '#10b981'})
-        fig_pareto.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="80% потерь")
+        fig_pareto.add_hline(y=80, line_dash="dash", line_color="red")
         st.plotly_chart(fig_pareto, use_container_width=True, config=plotly_config)
     
-    st.info("**Pareto по магазинам:** Какие магазины дают 80% всех потерь — приоритет для аудита.")
-
     st.markdown("---")
     st.subheader("📈 Прогноз по топ-3 категориям на 7 дней")
     with st.spinner("Обучаем модели Prophet..."):
@@ -362,17 +366,15 @@ with tab4:
                 st.dataframe(tbl, use_container_width=True)
 
 with tab5:
-    st.subheader("💡 Персонализированные рекомендации")
+    st.subheader("💡 Персонализированные рекомендации с учётом What-if")
     top_cat = суммарные_потери.iloc[0]['Категория'] if len(суммарные_потери) > 0 else "—"
     top_store = потери_по_магазинам.iloc[0]['Магазин'] if len(потери_по_магазинам) > 0 else "—"
-    peak_day = day_avg.idxmax() if 'day_avg' in locals() else "—"
+    peak_day = df_day.groupby('День')['СуммаПотерь'].sum().idxmax()
     
-    st.error(f"🔴 **Высокий приоритет:** Усилить контроль в категории «{top_cat}» — лидер по потерям.")
-    st.error(f"🔴 **Высокий приоритет:** Провести аудит магазина «{top_store}» — максимальные потери (Pareto 80%).")
-    st.warning(f"🟡 **Средний приоритет:** Пик потерь в день «{peak_day}» — добавить проверки полок и приёмки.")
-    st.warning(f"🟡 **Средний приоритет:** Фокус на A-классе (ABC-анализ) — там 80% потерь.")
-    st.success(f"🟢 **Проактивно:** Следите за прогнозом роста в топ-категориях на следующей неделе.")
-    st.success(f"💰 **Потенциальная экономия:** 20–30% при внедрении мер контроля.")
+    st.error(f"🔴 **Высокий приоритет:** Контроль A-класса — экономия до {экономия_a:,.0f} ₽ при снижении на {reduce_a}%")
+    st.error(f"🔴 **Высокий приоритет:** Аудит топ-магазина — экономия до {экономия_store:,.0f} ₽ при снижении на {reduce_top_store}%")
+    st.warning(f"🟡 **Средний приоритет:** Оптимизация пиковых дней ({peak_day}) — экономия до {экономия_peak:,.0f} ₽")
+    st.success(f"🟢 **Максимальный потенциал:** {общая_экономия:,.0f} ₽ при реализации всех мер")
 
     st.markdown("---")
     buffer = io.BytesIO()
@@ -384,18 +386,17 @@ with tab5:
         потери_по_магазинам.to_excel(writer, sheet_name='ПоМагазинам', index=False)
         abc.to_excel(writer, sheet_name='ABC_категории', index=False)
         pareto_store.to_excel(writer, sheet_name='Pareto_магазины', index=False)
-        pd.DataFrame([f"Рекомендация: {r}" for r in [
-            f"Усилить контроль в категории {top_cat}",
-            f"Аудит магазина {top_store}",
-            f"Проверки в день {peak_day}",
-            "Фокус на A-классе",
-            "Следить за прогнозом"
-        ]], columns=['Рекомендация']).to_excel(writer, sheet_name='Рекомендации', index=False)
+        pd.DataFrame([
+            ["A-класс категорий", reduce_a, экономия_a],
+            ["Пиковые дни", reduce_peak, экономия_peak],
+            ["Топ-магазин (Pareto)", reduce_top_store, экономия_store],
+            ["Общая экономия", "", общая_экономия]
+        ], columns=['Сценарий', '% снижения', 'Экономия ₽']).to_excel(writer, sheet_name='What_if', index=False)
     buffer.seek(0)
     
     st.download_button(
-        "📥 Скачать полный отчёт (Excel)",
+        "📥 Скачать полный отчёт с What-if (Excel)",
         data=buffer,
-        file_name=f"RetailLoss_Report_{datetime.today().strftime('%d%m%Y')}.xlsx",
+        file_name=f"RetailLoss_WhatIf_{datetime.today().strftime('%d%m%Y')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
