@@ -40,7 +40,7 @@ with st.sidebar:
 @st.cache_data
 def сгенерировать_тестовые_данные():
     np.random.seed(42)
-    сегодня = datetime(2025, 12, 20)
+    сегодня = datetime.now()  # Изменено на динамическую дату для актуальности
     даты = pd.date_range(end=сегодня, periods=180, freq='D')
     категории = np.random.choice(['Молочка', 'Мясо', 'Овощи', 'Алкоголь', 'Хлеб', 'Бакалея', 'Заморозка'], size=180)
     суммы_потерь = np.random.uniform(300, 7000, size=180).round(2)
@@ -198,14 +198,14 @@ def выполнить_анализ(df_original):
         fig_cat = px.bar(суммарные_потери, x='Категория', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='YlOrRd')
         fig_cat.update_traces(texttemplate='%{text:.0f} ₽', textposition='outside')
         fig_cat.update_layout(yaxis_title='Сумма потерь, ₽', height=500)
-        st.plotly_chart(fig_cat, use_container_width=True)
+        st.plotly_chart(fig_cat, width='stretch')
     with col2:
         st.subheader("🏪 Потери по магазинам")
         потери_по_магазинам = df.groupby('Магазин')['СуммаПотерь'].sum().reset_index().sort_values('СуммаПотерь', ascending=False)
         fig_store = px.bar(потери_по_магазинам, x='Магазин', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='YlOrRd')
         fig_store.update_traces(texttemplate='%{text:.0f} ₽', textposition='outside')
         fig_store.update_layout(yaxis_title='Сумма потерь, ₽', height=500)
-        st.plotly_chart(fig_store, use_container_width=True)
+        st.plotly_chart(fig_store, width='stretch')
     
     # Динамика по месяцам и кварталам
     st.subheader("📊 Динамика потерь по месяцам и кварталам")
@@ -221,16 +221,19 @@ def выполнить_анализ(df_original):
     with col1:
         fig_monthly = px.line(monthly_losses, x='Месяц', y='СуммаПотерь', markers=True, title='По месяцам')
         fig_monthly.update_layout(yaxis_title='Сумма потерь, ₽', height=400)
-        st.plotly_chart(fig_monthly, use_container_width=True)
+        st.plotly_chart(fig_monthly, width='stretch')
     with col2:
         fig_quarterly = px.line(quarterly_losses, x='Квартал', y='СуммаПотерь', markers=True, title='По кварталам')
         fig_quarterly.update_layout(yaxis_title='Сумма потерь, ₽', height=400)
-        st.plotly_chart(fig_quarterly, use_container_width=True)
+        st.plotly_chart(fig_quarterly, width='stretch')
     
     buf_month = io.BytesIO()
-    fig_monthly.write_image(buf_month, format='png')
-    buf_month.seek(0)
-    st.download_button("📥 Скачать график по месяцам (PNG)", buf_month, file_name="динамика_по_месяцам.png", mime="image/png")
+    try:
+        fig_monthly.write_image(buf_month, format='png')
+        buf_month.seek(0)
+        st.download_button("📥 Скачать график по месяцам (PNG)", buf_month, file_name="динамика_по_месяцам.png", mime="image/png")
+    except ValueError as e:
+        st.warning(f"⚠️ Не удалось экспортировать график: {str(e)}. Убедитесь, что Kaleido установлен.")
     
     # 🌡️ Тепловая карта БЕЗ locale
     st.subheader("🌡️ Тепловая карта потерь (категории × дни недели)")
@@ -265,19 +268,22 @@ def выполнить_анализ(df_original):
         aspect="auto"
     )
     fig_heat.update_layout(height=600)
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width='stretch')
     
     buf_heat = io.BytesIO()
-    fig_heat.write_image(buf_heat, format='png')
-    buf_heat.seek(0)
-    st.download_button("📥 Скачать тепловую карту (PNG)", buf_heat, file_name="тепловая_карта_потерь.png", mime="image/png")
+    try:
+        fig_heat.write_image(buf_heat, format='png')
+        buf_heat.seek(0)
+        st.download_button("📥 Скачать тепловую карту (PNG)", buf_heat, file_name="тепловая_карта_потерь.png", mime="image/png")
+    except ValueError as e:
+        st.warning(f"⚠️ Не удалось экспортировать график: {str(e)}. Убедитесь, что Kaleido установлен.")
     
     # Аномалии
     if len(аномалии) > 0:
         st.subheader("⚠️ Выявленные аномалии (Isolation Forest)")
         аномалии_disp = аномалии.copy()
         аномалии_disp['Дата'] = аномалии_disp['Дата'].dt.strftime('%d.%m.%Y')
-        st.dataframe(аномалии_disp[['Дата', 'Категория', 'СуммаПотерь', 'Магазин']], use_container_width=True)
+        st.dataframe(аномалии_disp[['Дата', 'Категория', 'СуммаПотерь', 'Магазин']], width='stretch')
     else:
         st.success("✅ Аномалий не выявлено")
     
@@ -297,7 +303,7 @@ def выполнить_анализ(df_original):
             'min': 'Мин', '25%': '25%', '50%': 'Медиана', '75%': '75%', 'max': 'Макс'
         }).round(2)
         st.subheader("🧩 Кластеры потерь (K-Means)")
-        st.dataframe(кластеры, use_container_width=True)
+        st.dataframe(кластеры, width='stretch')
     
     # Прогноз с Prophet
     ежедневные_потери = df.groupby('Дата')['СуммаПотерь'].sum().reset_index()
@@ -317,17 +323,20 @@ def выполнить_анализ(df_original):
         fig_prog.add_scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='Мин', line=dict(color='rgba(0,0,0,0)'), showlegend=False)
         fig_prog.add_scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='Макс', fill='tonexty', fillcolor='rgba(248, 113, 113, 0.2)', line=dict(color='rgba(0,0,0,0)'), showlegend=False)
         fig_prog.update_layout(height=600)
-        st.plotly_chart(fig_prog, use_container_width=True)
+        st.plotly_chart(fig_prog, width='stretch')
         
         buf_prog = io.BytesIO()
-        fig_prog.write_image(buf_prog, format='png')
-        buf_prog.seek(0)
-        st.download_button("📥 Скачать график прогноза (PNG)", buf_prog, file_name="прогноз_потерь.png", mime="image/png")
+        try:
+            fig_prog.write_image(buf_prog, format='png')
+            buf_prog.seek(0)
+            st.download_button("📥 Скачать график прогноза (PNG)", buf_prog, file_name="прогноз_потерь.png", mime="image/png")
+        except ValueError as e:
+            st.warning(f"⚠️ Не удалось экспортировать график: {str(e)}. Убедитесь, что Kaleido установлен.")
         
         прогноз_disp = прогноз_df.copy()
         прогноз_disp['Дата'] = прогноз_disp['Дата'].dt.strftime('%d.%m.%Y')
         прогноз_disp = прогноз_disp[['Дата', 'Прогноз', 'yhat_lower', 'yhat_upper']].rename(columns={'yhat_lower': 'Мин прогноз', 'yhat_upper': 'Макс прогноз'})
-        st.dataframe(прогноз_disp, use_container_width=True)
+        st.dataframe(прогноз_disp, width='stretch')
     else:
         st.warning("⚠️ Недостаточно данных для прогноза (нужно ≥14 дней).")
     
@@ -387,7 +396,7 @@ def выполнить_анализ(df_original):
             кластеры.to_excel(writer, sheet_name='Кластеры')
         if прогноз_df is not None:
             прогноз_exp = прогноз_df.copy()
-            прогноз_exp['Дата'] = прогноз_exp['Дата'].dt.strftime('%d.%м.%Y')
+            прогноз_exp['Дата'] = прогноз_exp['Дата'].dt.strftime('%d.%m.%Y')
             прогноз_exp.to_excel(writer, sheet_name='Прогноз')
         pd.DataFrame(персонализированные_рекомендации, columns=['Рекомендация']).to_excel(writer, sheet_name='Рекомендации')
     buffer.seek(0)
@@ -420,4 +429,4 @@ else:
     st.info("👆 Загрузите файл Excel или нажмите «Тестовые данные» для демо.")
     st.markdown("### Превью тестовых данных")
     preview_df = сгенерировать_тестовые_данные()
-    st.dataframe(preview_df.head(20), use_container_width=True)
+    st.dataframe(preview_df.head(20), width='stretch')
