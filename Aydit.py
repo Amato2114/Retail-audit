@@ -7,6 +7,9 @@ from sklearn.ensemble import IsolationForest
 from sklearn.cluster import KMeans
 from datetime import datetime, timedelta
 import io
+import logging
+
+logging.getLogger('cmdstanpy').setLevel(logging.WARNING)  # Подавить логи Prophet
 
 # Настройка страницы
 st.set_page_config(page_title="RetailLoss Sentinel v8", layout="wide", page_icon="🛡️")
@@ -116,24 +119,8 @@ else:
     st.dataframe(preview_df.head(20), width='stretch')
     st.stop()
 
-# Фильтры + What-if + кнопки сброса и оптимального
+# Кнопки сброса и оптимального (выше слайдеров)
 with st.sidebar:
-    st.markdown("---")
-    st.subheader("🔧 Фильтры")
-    магазины_список = ['Все'] + sorted(df_raw['Магазин'].unique().tolist())
-    выбранные_магазины = st.multiselect("Магазины", магазины_список, default='Все')
-    категории_список = ['Все'] + sorted(df_raw['Категория'].unique().tolist())
-    выбранные_категории = st.multiselect("Категории", категории_список, default='Все')
-    min_date = df_raw['Дата'].min().date()
-    max_date = df_raw['Дата'].max().date()
-    выбранный_период = st.date_input("Период дат", value=(min_date, max_date), min_value=min_date, max_value=max_date)
-    
-    st.markdown("---")
-    st.subheader("🧮 What-if сценарии")
-    reduce_a = st.slider("Снижение потерь в A-классе категорий, %", 0, 50, value=st.session_state.get('reduce_a', 10))
-    reduce_peak = st.slider("Снижение потерь в пиковые дни недели, %", 0, 50, value=st.session_state.get('reduce_peak', 15))
-    reduce_top_store = st.slider("Снижение потерь в топ-магазине (Pareto 80%), %", 0, 50, value=st.session_state.get('reduce_top_store', 20))
-    
     st.markdown("---")
     col_reset, col_optimal = st.columns(2)
     with col_reset:
@@ -148,6 +135,24 @@ with st.sidebar:
             st.session_state.reduce_peak = 20
             st.session_state.reduce_top_store = 30
             st.rerun()
+
+# Фильтры
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("🔧 Фильтры")
+    магазины_список = ['Все'] + sorted(df_raw['Магазин'].unique().tolist())
+    выбранные_магазины = st.multiselect("Магазины", магазины_список, default='Все')
+    категории_список = ['Все'] + sorted(df_raw['Категория'].unique().tolist())
+    выбранные_категории = st.multiselect("Категории", категории_список, default='Все')
+    min_date = df_raw['Дата'].min().date()
+    max_date = df_raw['Дата'].max().date()
+    выбранный_период = st.date_input("Период дат", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+    
+    st.markdown("---")
+    st.subheader("🧮 What-if сценарии")
+    reduce_a = st.slider("Снижение в A-классе, %", 0, 50, value=st.session_state.get('reduce_a', 10))
+    reduce_peak = st.slider("Снижение в пиковые дни, %", 0, 50, value=st.session_state.get('reduce_peak', 15))
+    reduce_top_store = st.slider("Снижение в топ-магазине, %", 0, 50, value=st.session_state.get('reduce_top_store', 20))
 
 # Применение фильтров
 df = df_raw.copy()
@@ -167,7 +172,7 @@ if df.empty:
 суммарные_потери = df.groupby('Категория')['СуммаПотерь'].sum().reset_index().sort_values('СуммаПотерь', ascending=False)
 потери_по_магазинам = df.groupby('Магазин')['СуммаПотерь'].sum().reset_index().sort_values('СуммаПотерь', ascending=False)
 
-# ABC и Pareto (глобально)
+# ABC и Pareto
 abc = суммарные_потери.copy()
 abc['Доля_%'] = (abc['СуммаПотерь'] / текущие_потери * 100).round(2)
 abc['Накопительная_доля'] = abc['Доля_%'].cumsum()
@@ -193,7 +198,7 @@ top_store_loss = pareto_store[pareto_store['Pareto'] == '80%']['СуммаПот
 
 общая_экономия = экономия_a + экономия_peak + экономия_store
 
-# Авто-рекомендация оптимального сценария
+# Авто-рекомендация
 st.markdown("### 🤖 Авто-рекомендация оптимального сценария")
 max_possible = round(текущие_потери * 0.3)
 if общая_экономия >= max_possible * 0.8:
@@ -210,26 +215,26 @@ st.markdown(f"""
             {текущие_потери:,.0f} ₽
         </h1>
         <p style='font-size: 20px; color: gray; margin: 5px 0;'>
-            Общие потери за период
+            Общие потери за выбранный период
         </p>
     </div>
 """, unsafe_allow_html=True)
 
 # What-if результаты
-st.markdown("### 💰 Потенциальная экономия по What-if сценариям")
+st.markdown("### 💰 Потенциальная экономия")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("A-класс категорий", f"{экономия_a:,.0f} ₽", delta=f"-{reduce_a}%")
+    st.metric("A-класс", f"{экономия_a:,.0f} ₽", delta=f"-{reduce_a}%")
 with col2:
     st.metric("Пиковые дни", f"{экономия_peak:,.0f} ₽", delta=f"-{reduce_peak}%")
 with col3:
-    st.metric("Топ-магазин (Pareto)", f"{экономия_store:,.0f} ₽", delta=f"-{reduce_top_store}%")
+    st.metric("Топ-магазин", f"{экономия_store:,.0f} ₽", delta=f"-{reduce_top_store}%")
 with col4:
-    st.metric("**Общая экономия**", f"{общая_экономия:,.0f} ₽", delta="при реализации всех мер")
+    st.metric("**Общая**", f"{общая_экономия:,.0f} ₽")
 
 st.markdown("---")
 
-# Конфиг для графиков
+# Конфиг графиков
 plotly_config = {"toImageButtonOptions": {"format": "png", "filename": "график", "height": 600, "width": 1000, "scale": 2}}
 
 # Табы
@@ -275,7 +280,7 @@ with tab2:
         fig_quarterly = px.line(quarterly, x='Квартал', y='СуммаПотерь', markers=True)
         st.plotly_chart(fig_quarterly, width='stretch', config=plotly_config)
     
-    st.subheader("🌡️ Тепловая карта потерь (категории × дни недели)")
+    st.subheader("🌡️ Тепловая карта потерь")
     df_heat = df.copy()
     df_heat['День'] = df_heat['Дата'].dt.weekday.map(day_map)
     pivot = df_heat.pivot_table(values='СуммаПотерь', index='Категория', columns='День', aggfunc='sum', fill_value=0)
@@ -292,10 +297,10 @@ with tab2:
     
     st.subheader("🔥 Топ-5 категорий в динамике")
     top5_cats = суммарные_потери.head(5)['Категория'].tolist()
-    df_top5 = df[df['Катegoрия'].isin(top5_cats)].copy()
+    df_top5 = df[df['Категория'].isin(top5_cats)].copy()
     df_top5['Месяц'] = df_top5['Дата'].dt.to_period('M').astype(str)
     monthly_top5 = df_top5.groupby(['Месяц', 'Категория'])['СуммаПотерь'].sum().reset_index()
-    fig_top5_dynamic = px.line(monthly_top5, x='Месяц', y='СуммаПотерь', color='Катegoрия', markers=True)
+    fig_top5_dynamic = px.line(monthly_top5, x='Месяц', y='СуммаПотерь', color='Категория', markers=True)
     st.plotly_chart(fig_top5_dynamic, width='stretch', config=plotly_config)
 
 with tab3:
@@ -318,7 +323,7 @@ with tab3:
             if len(аномалии) > 0:
                 disp = аномалии[['Дата', 'Категория', 'СуммаПотерь', 'Магазин']].copy()
                 disp['Дата'] = disp['Дата'].dt.strftime('%d.%m.%Y')
-                with st.expander(f"📋 Подробная таблица аномалий ({len(аномалии)} шт.)"):
+                with st.expander(f"📋 Аномалии ({len(аномалии)} шт.)"):
                     st.dataframe(disp, width='stretch')
                 st.error(f"🚨 Выявлено {len(аномалии)} аномалий")
             else:
@@ -326,7 +331,7 @@ with tab3:
         else:
             st.info("ℹ️ Недостаточно данных для анализа аномалий")
     
-    with st.spinner("Выполняем кластеризацию..."):
+    with st.spinner("Кластеризация..."):
         if len(df) >= 3:
             kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
             df['Кластер'] = kmeans.fit_predict(df[['СуммаПотерь']])
@@ -337,7 +342,7 @@ with tab3:
             кластеры = df.groupby('Кластер')['СуммаПотерь'].describe().loc[labels].round(2)
             кластеры = кластеры.rename(columns={'count': 'Кол-во', 'mean': 'Среднее', 'min': 'Мин', '50%': 'Медиана', 'max': 'Макс'})
             st.subheader("🧩 Кластеры потерь")
-            with st.expander("📋 Подробная статистика кластеров"):
+            with st.expander("📋 Статистика кластеров"):
                 st.dataframe(кластеры, width='stretch')
 
 with tab4:
@@ -367,7 +372,7 @@ with tab4:
     
     st.markdown("---")
     st.subheader("📈 Прогноз по топ-3 категориям на 7 дней")
-    with st.spinner("Обучаем модели Prophet..."):
+    with st.spinner("Обучаем Prophet..."):
         top3 = суммарные_потери.head(3)['Категория'].tolist()
         fig_multi = px.line(title="Прогноз по топ-3 категориям")
         tables = {}
@@ -434,7 +439,7 @@ with tab5:
     
     st.download_button(
         "📥 Скачать полный отчёт (Excel)",
-        data=buffer.getvalue(),  # getvalue() instead of buffer to fix MediaFileHandler
+        data=buffer.getvalue(),
         file_name=f"RetailLoss_Report_{datetime.today().strftime('%d%m%Y')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
