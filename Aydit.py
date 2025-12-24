@@ -116,7 +116,7 @@ else:
     st.dataframe(preview_df.head(20), width='stretch')
     st.stop()
 
-# Фильтры + What-if + кнопка сброса + кнопка оптимального сценария
+# Фильтры + What-if + кнопки сброса и оптимального
 with st.sidebar:
     st.markdown("---")
     st.subheader("🔧 Фильтры")
@@ -130,15 +130,17 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🧮 What-if сценарии")
-    reduce_a = st.slider("Снижение потерь в A-классе категорий, %", 0, 50, 10, key="reduce_a")
-    reduce_peak = st.slider("Снижение потерь в пиковые дни недели, %", 0, 50, 15, key="reduce_peak")
-    reduce_top_store = st.slider("Снижение потерь в топ-магазине (Pareto 80%), %", 0, 50, 20, key="reduce_top_store")
+    reduce_a = st.slider("Снижение потерь в A-классе категорий, %", 0, 50, value=st.session_state.get('reduce_a', 10))
+    reduce_peak = st.slider("Снижение потерь в пиковые дни недели, %", 0, 50, value=st.session_state.get('reduce_peak', 15))
+    reduce_top_store = st.slider("Снижение потерь в топ-магазине (Pareto 80%), %", 0, 50, value=st.session_state.get('reduce_top_store', 20))
     
     st.markdown("---")
     col_reset, col_optimal = st.columns(2)
     with col_reset:
         if st.button("🔄 Сброс"):
-            st.session_state.clear()
+            for key in ['reduce_a', 'reduce_peak', 'reduce_top_store']:
+                if key in st.session_state:
+                    del st.session_state[key]
             st.rerun()
     with col_optimal:
         if st.button("🎯 Оптимальный"):
@@ -246,17 +248,15 @@ with tab1:
     
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("🔥 Потери по категориям (A-класс подсвечен)")
-        fig_cat = px.bar(суммарные_потери, x='Категория', y='СуммаПотерь', text='СуммаПотерь', color=суммарные_потери['Категория'].isin(abc[abc['ABC'] == 'A']['Категория']),
-                         color_discrete_map={True: '#ef4444', False: '#94a3b8'})
+        st.subheader("🔥 Потери по категориям")
+        fig_cat = px.bar(суммарные_потери, x='Категория', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='YlOrRd')
         fig_cat.update_traces(texttemplate='%{text:.0f} ₽', textposition='outside')
-        st.plotly_chart(fig_cat, use_container_width=True, config=plotly_config)
+        st.plotly_chart(fig_cat, width='stretch', config=plotly_config)
     with col2:
-        st.subheader("🏪 Потери по магазинам (Pareto 80% подсвечен)")
-        fig_store = px.bar(потери_по_магазинам, x='Магазин', y='СуммаПотерь', text='СуммаПотерь', color=потери_по_магазинам['Магазин'].isin(pareto_store[pareto_store['Pareto'] == '80%']['Магазин']),
-                           color_discrete_map={True: '#ef4444', False: '#94a3b8'})
+        st.subheader("🏪 Потери по магазинам")
+        fig_store = px.bar(потери_по_магазинам, x='Магазин', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='YlOrRd')
         fig_store.update_traces(texttemplate='%{text:.0f} ₽', textposition='outside')
-        st.plotly_chart(fig_store, use_container_width=True, config=plotly_config)
+        st.plotly_chart(fig_store, width='stretch', config=plotly_config)
 
 with tab2:
     col1, col2 = st.columns(2)
@@ -266,14 +266,14 @@ with tab2:
         df_month['Месяц'] = df_month['Дата'].dt.to_period('M').astype(str)
         monthly = df_month.groupby('Месяц')['СуммаПотерь'].sum().reset_index()
         fig_monthly = px.line(monthly, x='Месяц', y='СуммаПотерь', markers=True)
-        st.plotly_chart(fig_monthly, use_container_width=True, config=plotly_config)
+        st.plotly_chart(fig_monthly, width='stretch', config=plotly_config)
     with col2:
         st.subheader("🗓️ Динамика по кварталам")
         df_quarter = df.copy()
         df_quarter['Квартал'] = df_quarter['Дата'].dt.to_period('Q').astype(str)
         quarterly = df_quarter.groupby('Квартал')['СуммаПотерь'].sum().reset_index()
         fig_quarterly = px.line(quarterly, x='Квартал', y='СуммаПотерь', markers=True)
-        st.plotly_chart(fig_quarterly, use_container_width=True, config=plotly_config)
+        st.plotly_chart(fig_quarterly, width='stretch', config=plotly_config)
     
     st.subheader("🌡️ Тепловая карта потерь (категории × дни недели)")
     df_heat = df.copy()
@@ -281,22 +281,22 @@ with tab2:
     pivot = df_heat.pivot_table(values='СуммаПотерь', index='Категория', columns='День', aggfunc='sum', fill_value=0)
     pivot = pivot[['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']]
     fig_heat = px.imshow(pivot.values, x=pivot.columns, y=pivot.index, color_continuous_scale='YlOrRd', text_auto=True)
-    st.plotly_chart(fig_heat, use_container_width=True, config=plotly_config)
+    st.plotly_chart(fig_heat, width='stretch', config=plotly_config)
     
     st.markdown("---")
     st.subheader("📊 Средние потери по дням недели")
     day_avg = df_day.groupby('День')['СуммаПотерь'].mean().reindex(['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'])
     fig_day_avg = px.bar(day_avg.reset_index(), x='День', y='СуммаПотерь', text='СуммаПотерь', color='СуммаПотерь', color_continuous_scale='Blues')
     fig_day_avg.update_traces(texttemplate='%{text:.0f} ₽', textposition='outside')
-    st.plotly_chart(fig_day_avg, use_container_width=True, config=plotly_config)
+    st.plotly_chart(fig_day_avg, width='stretch', config=plotly_config)
     
     st.subheader("🔥 Топ-5 категорий в динамике")
     top5_cats = суммарные_потери.head(5)['Категория'].tolist()
-    df_top5 = df[df['Категория'].isin(top5_cats)].copy()
+    df_top5 = df[df['Катegoрия'].isin(top5_cats)].copy()
     df_top5['Месяц'] = df_top5['Дата'].dt.to_period('M').astype(str)
     monthly_top5 = df_top5.groupby(['Месяц', 'Категория'])['СуммаПотерь'].sum().reset_index()
-    fig_top5_dynamic = px.line(monthly_top5, x='Месяц', y='СуммаПотерь', color='Категория', markers=True)
-    st.plotly_chart(fig_top5_dynamic, use_container_width=True, config=plotly_config)
+    fig_top5_dynamic = px.line(monthly_top5, x='Месяц', y='СуммаПотерь', color='Катegoрия', markers=True)
+    st.plotly_chart(fig_top5_dynamic, width='stretch', config=plotly_config)
 
 with tab3:
     with st.spinner("Анализируем аномалии..."):
@@ -319,7 +319,7 @@ with tab3:
                 disp = аномалии[['Дата', 'Категория', 'СуммаПотерь', 'Магазин']].copy()
                 disp['Дата'] = disp['Дата'].dt.strftime('%d.%m.%Y')
                 with st.expander(f"📋 Подробная таблица аномалий ({len(аномалии)} шт.)"):
-                    st.dataframe(disp, use_container_width=True)
+                    st.dataframe(disp, width='stretch')
                 st.error(f"🚨 Выявлено {len(аномалии)} аномалий")
             else:
                 st.success("✅ Аномалий не обнаружено")
@@ -338,32 +338,32 @@ with tab3:
             кластеры = кластеры.rename(columns={'count': 'Кол-во', 'mean': 'Среднее', 'min': 'Мин', '50%': 'Медиана', 'max': 'Макс'})
             st.subheader("🧩 Кластеры потерь")
             with st.expander("📋 Подробная статистика кластеров"):
-                st.dataframe(кластеры, use_container_width=True)
+                st.dataframe(кластеры, width='stretch')
 
 with tab4:
     st.subheader("📊 ABC-анализ категорий")
     col1, col2 = st.columns(2)
     with col1:
         with st.expander("📋 Таблица ABC"):
-            st.dataframe(abc[['Категория', 'СуммаПотерь', 'Доля_%', 'Накопительная_доля', 'ABC']], use_container_width=True)
+            st.dataframe(abc[['Категория', 'СуммаПотерь', 'Доля_%', 'Накопительная_доля', 'ABC']], width='stretch')
     with col2:
         fig_abc = px.bar(abc, x='Категория', y='Накопительная_доля', color='ABC',
                          color_discrete_map={'A': '#ef4444', 'B': '#f59e0b', 'C': '#10b981'})
         fig_abc.add_hline(y=80, line_dash="dash", line_color="red")
         fig_abc.add_hline(y=95, line_dash="dash", line_color="orange")
-        st.plotly_chart(fig_abc, use_container_width=True, config=plotly_config)
+        st.plotly_chart(fig_abc, width='stretch', config=plotly_config)
     
     st.markdown("---")
     st.subheader("🏪 Pareto-анализ магазинов")
     col1, col2 = st.columns(2)
     with col1:
         with st.expander("📋 Таблица Pareto"):
-            st.dataframe(pareto_store[['Магазин', 'СуммаПотерь', 'Доля_%', 'Накопительная_доля', 'Pareto']], use_container_width=True)
+            st.dataframe(pareto_store[['Магазин', 'СуммаПотерь', 'Доля_%', 'Накопительная_доля', 'Pareto']], width='stretch')
     with col2:
         fig_pareto = px.bar(pareto_store, x='Магазин', y='Накопительная_доля', color='Pareto',
                             color_discrete_map={'80%': '#ef4444', '95%': '#f59e0b', '100%': '#10b981'})
         fig_pareto.add_hline(y=80, line_dash="dash", line_color="red")
-        st.plotly_chart(fig_pareto, use_container_width=True, config=plotly_config)
+        st.plotly_chart(fig_pareto, width='stretch', config=plotly_config)
     
     st.markdown("---")
     st.subheader("📈 Прогноз по топ-3 категориям на 7 дней")
@@ -389,28 +389,27 @@ with tab4:
                 tables[cat] = tbl.rename(columns={'ds': 'Дата', 'yhat': 'Прогноз', 'yhat_lower': 'Мин', 'yhat_upper': 'Макс'})
         
         if tables:
-            st.plotly_chart(fig_multi.update_layout(height=600), use_container_width=True, config=plotly_config)
+            st.plotly_chart(fig_multi.update_layout(height=600), width='stretch', config=plotly_config)
             for cat, tbl in tables.items():
                 with st.expander(f"📋 Прогноз для {cat}"):
-                    st.dataframe(tbl, use_container_width=True)
+                    st.dataframe(tbl, width='stretch')
 
 with tab5:
     st.subheader("💡 Ранжированные рекомендации по экономии")
     
     рекомендации = [
-        {"Приоритет": 1, "Текст": "Контроль A-класса категорий", "Экономия": экономия_a, "Снижение": reduce_a},
-        {"Приоритет": 2, "Текст": "Аудит топ-магазина (Pareto 80%)", "Экономия": экономия_store, "Снижение": reduce_top_store},
-        {"Приоритет": 3, "Текст": "Оптимизация пиковых дней недели", "Экономия": экономия_peak, "Снижение": reduce_peak},
+        {"Текст": "Контроль A-класса категорий", "Экономия": экономия_a, "Снижение": reduce_a, "Цвет": "error"},
+        {"Текст": "Аудит топ-магазина (Pareto 80%)", "Экономия": экономия_store, "Снижение": reduce_top_store, "Цвет": "error"},
+        {"Текст": "Оптимизация пиковых дней недели", "Экономия": экономия_peak, "Снижение": reduce_peak, "Цвет": "warning"},
     ]
     рекомендации = sorted(рекомендации, key=lambda x: x["Экономия"], reverse=True)
     
-    for r in рекомендации:
-        if r["Приоритет"] == 1:
-            st.error(f"🔴 **{r['Приоритет']} приоритет:** {r['Текст']} — экономия до {r['Экономия']:,.0f} ₽ при снижении на {r['Снижение']}%")
-        elif r["Приоритет"] == 2:
-            st.warning(f"🟡 **{r['Приоритет']} приоритет:** {r['Текст']} — экономия до {r['Экономия']:,.0f} ₽ при снижении на {r['Снижение']}%")
-        else:
-            st.info(f"🔵 **{r['Приоритет']} приоритет:** {r['Текст']} — экономия до {r['Экономия']:,.0f} ₽ при снижении на {r['Снижение']}%")
+    for i, r in enumerate(рекомендации, 1):
+        text = f"{i}. {r['Текст']} — экономия до {r['Экономия']:,.0f} ₽ при снижении на {r['Снижение']}%"
+        if r["Цвет"] == "error":
+            st.error(text)
+        elif r["Цвет"] == "warning":
+            st.warning(text)
     
     st.success(f"🟢 **Максимальный потенциал:** {общая_экономия:,.0f} ₽ при реализации всех мер")
 
@@ -435,7 +434,7 @@ with tab5:
     
     st.download_button(
         "📥 Скачать полный отчёт (Excel)",
-        data=buffer,
+        data=buffer.getvalue(),  # getvalue() instead of buffer to fix MediaFileHandler
         file_name=f"RetailLoss_Report_{datetime.today().strftime('%d%m%Y')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
